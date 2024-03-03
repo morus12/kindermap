@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -12,73 +13,71 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/PuerkitoBio/goquery"
 	geojson "github.com/paulmach/go.geojson"
 )
 
-var (
-	reg *regexp.Regexp = regexp.MustCompile(`^[^+\d]+[0-9]+`)
-)
-
-func main() {
-	errlog := log.New(os.Stderr, "", 1)
-
-	resp, err := http.Get("https://rekrutacja-zlobki.um.wroc.pl/wroclaw/zlobek/oferta")
-	if err != nil {
-		panic(err)
-	}
-	defer resp.Body.Close()
-
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		errlog.Panicln(err)
-	}
-
-	fc := geojson.NewFeatureCollection()
-
-	doc.Find("#unitstable > tbody > tr").Each(func(i int, s *goquery.Selection) {
-
-		name := s.Find("a:nth-child(1)").Text()
-		addr := s.Find("a:nth-child(2)").Text()
-		link, exists := s.Find("a:nth-child(1)").Attr("href")
-		if addr == "" {
-			return
-		}
-
-		district := s.Find(".district").Text()
-
-		point, err := addrToPoint(addr)
-		if err != nil {
-			errlog.Println(err)
-			return
-		}
-
-		point.SetProperty("name", name)
-		point.SetProperty("district", district)
-		if exists {
-			point.SetProperty("description", "[[https://rekrutacja-zlobki.um.wroc.pl"+link+"|Szczegóły]]\n"+addr)
-		}
-		fc.AddFeature(point)
-	})
-
-	rawJSON, err := fc.MarshalJSON()
-	if err != nil {
-		errlog.Panicln(err)
-	}
-
-	err = ioutil.WriteFile("geo.json", rawJSON, 0664)
-	if err != nil {
-		errlog.Panicln(err)
-	}
-}
+var reg *regexp.Regexp = regexp.MustCompile(`^[^+\d]+[0-9]+`)
 
 type Place struct {
 	Lon string `json:"lon"`
 	Lat string `json:"lat"`
 }
 
-func addrToPoint(addr string) (*geojson.Feature, error) {
+func main() {
+	errlog := log.New(os.Stderr, "", 1)
 
+	// Load CSV file
+	file, err := os.Open("convertcsv1.csv")
+	if err != nil {
+		panic(err)
+	}
+
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	reader.FieldsPerRecord = -1
+	reader.Comma = ';'
+	records, err := reader.ReadAll()
+	if err != nil {
+		panic(err)
+	}
+
+	fc := geojson.NewFeatureCollection()
+
+	for _, record := range records {
+		// Assuming the structure of CSV records
+		if len(record) < 11 {
+			continue
+		}
+		name := record[1]
+		addr := record[3]
+
+		district := record[10]
+
+		point, err := addrToPoint(addr)
+		if err != nil {
+			errlog.Println(err)
+			continue
+		}
+
+		point.SetProperty("name", name)
+		point.SetProperty("district", district)
+
+		fc.AddFeature(point)
+	}
+
+	rawJSON, err := fc.MarshalJSON()
+	if err != nil {
+		errlog.Panicln(err)
+	}
+
+	err = ioutil.WriteFile("geo.json", rawJSON, 0o664)
+	if err != nil {
+		errlog.Panicln(err)
+	}
+}
+
+func addrToPoint(addr string) (*geojson.Feature, error) {
 	place, err := getPlace(addr)
 	if err != nil {
 
@@ -86,7 +85,6 @@ func addrToPoint(addr string) (*geojson.Feature, error) {
 		parts := strings.Split(addr, ".")
 		addr = parts[len(parts)-1]
 		place, err = getPlace(addr + ", Wrocław")
-
 		if err != nil {
 			return nil, err
 		}
@@ -120,7 +118,6 @@ func getPlace(query string) (*Place, error) {
 
 	defer resp.Body.Close()
 	raw, err := ioutil.ReadAll(resp.Body)
-
 	if err != nil {
 		return nil, err
 	}
@@ -136,5 +133,6 @@ func getPlace(query string) (*Place, error) {
 		return nil, fmt.Errorf("not found: %v", query)
 	}
 
+	fmt.Println(qs.Encode(), places[0])
 	return places[0], nil
 }
